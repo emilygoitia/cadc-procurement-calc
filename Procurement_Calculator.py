@@ -28,25 +28,19 @@ DEFAULT_BUFFER_DAYS    = 20
 TODAY = pd.to_datetime(date.today())
 
 STANDARD_EQUIPMENT = [
-    {"Equipment": "PO/PSA to Vendor",                     "Manufacturing (days)": 0},
-    {"Equipment": "Submittal Delivery to Engineer",       "Manufacturing (days)": 10},
-    {"Equipment": "Engineer Submittal Review",            "Manufacturing (days)": 10},
-    {"Equipment": "Vendor Submittal Revisions",           "Manufacturing (days)": 5},
-    {"Equipment": "Submittal Approval",                   "Manufacturing (days)": 0},
-    {"Equipment": "Permit Submittals",                    "Manufacturing (days)": 0},
-    {"Equipment": "Permits Available (if required)",      "Manufacturing (days)": 45},
-    {"Equipment": "Site Walk & Layout Review",            "Manufacturing (days)": 5},
-    {"Equipment": "Site Work Supplies",                   "Manufacturing (days)": 5},
-    {"Equipment": "Site Work Complete",                   "Manufacturing (days)": 30},
-    {"Equipment": "Crane Mobilized",                      "Manufacturing (days)": 2},
-    {"Equipment": "Set MK & Supplies",                    "Manufacturing (days)": 5},
-    {"Equipment": "Utility Connections",                  "Manufacturing (days)": 10},
-    {"Equipment": "Electrical Rough In",                  "Manufacturing (days)": 10},
-    {"Equipment": "Mechanical Connections",               "Manufacturing (days)": 10},
-    {"Equipment": "Fire Alarm / Low Voltage",             "Manufacturing (days)": 10},
-    {"Equipment": "Commissioning / Testing",              "Manufacturing (days)": 5},
-    {"Equipment": "Training & Handover",                  "Manufacturing (days)": 5},
-    {"Equipment": "Go Live",                              "Manufacturing (days)": 0},
+    {"Equipment": "MVS",                    "Manufacturing (days)": 0},
+    {"Equipment": "Air Cooler Chiller",    "Manufacturing (days)": 0},
+    {"Equipment": "E-House",                "Manufacturing (days)": 0},
+    {"Equipment": "MvTx",                   "Manufacturing (days)": 0},
+    {"Equipment": "Modular Generators",     "Manufacturing (days)": 0},
+    {"Equipment": "LVS",                    "Manufacturing (days)": 0},
+    {"Equipment": "UPS",                    "Manufacturing (days)": 0},
+    {"Equipment": "ATS",                    "Manufacturing (days)": 0},
+    {"Equipment": "STS",                    "Manufacturing (days)": 0},
+    {"Equipment": "PDU",                    "Manufacturing (days)": 0},
+    {"Equipment": "Fan Coil Walls",         "Manufacturing (days)": 0},
+    {"Equipment": "CDU",                    "Manufacturing (days)": 0},
+    {"Equipment": "BMS",                    "Manufacturing (days)": 0},
 ]
 
 # ================= Helpers =================
@@ -58,23 +52,56 @@ def as_int(x, default=0):
     except Exception:
         return default
 
-def bday_add(start, days, holidays=None):
-    if pd.isna(start) or days is None: return pd.NaT
-    return pd.to_datetime(np.busday_offset(np.datetime64(pd.to_datetime(start).date()),
-                                           int(days), holidays=sorted(list(holidays or set())), roll="forward"))
+def _sorted_holidays(holidays):
+    if not holidays:
+        return []
+    return sorted(list(holidays))
 
-def bday_sub(end, days, holidays=None):
-    if pd.isna(end) or days is None: return pd.NaT
-    return pd.to_datetime(np.busday_offset(np.datetime64(pd.to_datetime(end).date()),
-                                           -int(days), holidays=sorted(list(holidays or set())), roll="backward"))
+def day_add(start, days, holidays=None, calendar_mode=False):
+    if pd.isna(start) or days is None:
+        return pd.NaT
+    days = int(days)
+    if calendar_mode:
+        return pd.to_datetime(start) + pd.Timedelta(days=days)
+    return pd.to_datetime(
+        np.busday_offset(
+            np.datetime64(pd.to_datetime(start).date()),
+            days,
+            holidays=_sorted_holidays(holidays),
+            roll="forward",
+        )
+    )
 
-def bday_diff(d1, d2, holidays):
-    if pd.isna(d1) or pd.isna(d2): return None
-    return int(np.busday_count(np.datetime64(pd.to_datetime(d1).date()),
-                               np.datetime64(pd.to_datetime(d2).date()),
-                               holidays=sorted(list(holidays or set()))))
+def day_sub(end, days, holidays=None, calendar_mode=False):
+    if pd.isna(end) or days is None:
+        return pd.NaT
+    days = int(days)
+    if calendar_mode:
+        return pd.to_datetime(end) - pd.Timedelta(days=days)
+    return pd.to_datetime(
+        np.busday_offset(
+            np.datetime64(pd.to_datetime(end).date()),
+            -days,
+            holidays=_sorted_holidays(holidays),
+            roll="backward",
+        )
+    )
 
-def compute_pass(row, mode, holidays):
+def day_diff(d1, d2, holidays, calendar_mode=False):
+    if pd.isna(d1) or pd.isna(d2):
+        return None
+    if calendar_mode:
+        delta = pd.to_datetime(d2) - pd.to_datetime(d1)
+        return int(delta.days)
+    return int(
+        np.busday_count(
+            np.datetime64(pd.to_datetime(d1).date()),
+            np.datetime64(pd.to_datetime(d2).date()),
+            holidays=_sorted_holidays(holidays),
+        )
+    )
+
+def compute_pass(row, mode, holidays, calendar_mode):
     sub  = as_int(row.get("Submittal (days)"), DEFAULT_SUBMITTAL_DAYS)
     mfg  = as_int(row.get("Manufacturing (days)"), 0)
     ship = as_int(row.get("Shipping (days)"),  DEFAULT_SHIPPING_DAYS)
@@ -84,10 +111,10 @@ def compute_pass(row, mode, holidays):
 
     if mode == "Forward":
         if pd.isna(po): return {}
-        sub_end = bday_add(po, sub, holidays)
-        mfg_end = bday_add(sub_end, mfg, holidays)
-        ship_end = bday_add(mfg_end, ship, holidays)
-        roj_calc = bday_add(ship_end, buf, holidays)
+        sub_end = day_add(po, sub, holidays, calendar_mode)
+        mfg_end = day_add(sub_end, mfg, holidays, calendar_mode)
+        ship_end = day_add(mfg_end, ship, holidays, calendar_mode)
+        roj_calc = day_add(ship_end, buf, holidays, calendar_mode)
         return {"PO Execution": po,
                 "Submittal Start": po, "Submittal End": sub_end,
                 "Manufacturing Start": sub_end, "Manufacturing End": mfg_end,
@@ -96,10 +123,10 @@ def compute_pass(row, mode, holidays):
 
     if mode == "Backward":
         if pd.isna(roj): return {}
-        ship_end = bday_sub(roj, buf, holidays)
-        mfg_end  = bday_sub(ship_end, ship, holidays)
-        sub_end  = bday_sub(mfg_end, mfg, holidays)
-        po_calc  = bday_sub(sub_end, sub, holidays)
+        ship_end = day_sub(roj, buf, holidays, calendar_mode)
+        mfg_end  = day_sub(ship_end, ship, holidays, calendar_mode)
+        sub_end  = day_sub(mfg_end, mfg, holidays, calendar_mode)
+        po_calc  = day_sub(sub_end, sub, holidays, calendar_mode)
         if pd.notna(po_calc) and po_calc < TODAY:
             po_calc = TODAY
         return {"PO Execution": po_calc,
@@ -109,7 +136,7 @@ def compute_pass(row, mode, holidays):
                 "Buffer Start": ship_end, "ROJ_calc": roj, "Buffer End": roj}
     return {}
 
-def compute_all(df: pd.DataFrame, holiday_set) -> pd.DataFrame:
+def compute_all(df: pd.DataFrame, holiday_set, calendar_mode: bool) -> pd.DataFrame:
     recs = []
     if df is None or df.empty:
         return pd.DataFrame()
@@ -134,16 +161,16 @@ def compute_all(df: pd.DataFrame, holiday_set) -> pd.DataFrame:
 
         # Derive Manufacturing (days) if committed delivery is present (Forward)
         if mode == "Forward" and pd.notna(committed_delivery) and (pd.isna(mfg) or mfg == "") and pd.notna(po):
-            mfg_end = bday_sub(committed_delivery, buf, holiday_set)
-            mfg_end = bday_sub(mfg_end, ship, holiday_set)
-            sub_end = bday_add(po, sub, holiday_set)
+            mfg_end = day_sub(committed_delivery, buf, holiday_set, calendar_mode)
+            mfg_end = day_sub(mfg_end, ship, holiday_set, calendar_mode)
+            sub_end = day_add(po, sub, holiday_set, calendar_mode)
             if pd.notna(sub_end) and pd.notna(mfg_end):
-                mfg_dur = bday_diff(sub_end, mfg_end, holiday_set)
+                mfg_dur = day_diff(sub_end, mfg_end, holiday_set, calendar_mode)
                 if mfg_dur is not None and mfg_dur < 0:
                     mfg_dur = 0
                 row["Manufacturing (days)"] = mfg_dur
 
-        res = compute_pass(row, mode, holiday_set)
+        res = compute_pass(row, mode, holiday_set, calendar_mode)
         if not res:
             status_msg = "Missing inputs for calculation."
             po_display = row.get("PO Execution")
@@ -184,7 +211,7 @@ def compute_all(df: pd.DataFrame, holiday_set) -> pd.DataFrame:
         delta = None
         status = ""
         if pd.notna(roj_user) and pd.notna(final_delivery):
-            delta = bday_diff(roj_user, final_delivery, holiday_set)
+            delta = day_diff(roj_user, final_delivery, holiday_set, calendar_mode)
             if delta is not None and delta > 0:
                 status = "⛔Late vs ROJ"
             elif delta is not None and delta <= 0:
@@ -194,7 +221,7 @@ def compute_all(df: pd.DataFrame, holiday_set) -> pd.DataFrame:
         if mode == "Backward":
             po_req = res.get("PO Execution")
             if pd.notna(po_req):
-                flt = bday_diff(TODAY, po_req, holiday_set)
+                flt = day_diff(TODAY, po_req, holiday_set, calendar_mode)
                 if flt is not None and flt <= 22:
                     status = "‼️PO is critical. Execute ASAP"
 
@@ -252,7 +279,7 @@ def _norm_dates(df: pd.DataFrame) -> pd.DataFrame:
             out[c] = pd.to_datetime(out[c], errors="coerce")
     return out
 
-def compare_to_baseline(current: pd.DataFrame, baseline: pd.DataFrame, holiday_set) -> pd.DataFrame:
+def compare_to_baseline(current: pd.DataFrame, baseline: pd.DataFrame, holiday_set, calendar_mode: bool) -> pd.DataFrame:
     """Return a tidy comparison with Δ (business days) per key date."""
     if current is None or current.empty or baseline is None or baseline.empty:
         return pd.DataFrame()
@@ -269,12 +296,17 @@ def compare_to_baseline(current: pd.DataFrame, baseline: pd.DataFrame, holiday_s
     )
 
     # Compute deltas for each comparable date field
+    unit = "days" if calendar_mode else "bd"
+    delta_map = {}
+
     def delta_col(col_name):
         bcol = f"Base: {col_name}"
         ncol = f"New: {col_name}"
         if bcol in merged.columns and ncol in merged.columns:
-            merged[f"Δ {col_name} (bd)"] = merged.apply(
-                lambda r: bday_diff(r[bcol], r[ncol], holiday_set) if not (pd.isna(r[bcol]) or pd.isna(r[ncol])) else None,
+            col = f"Δ {col_name} ({unit})"
+            delta_map[col_name] = col
+            merged[col] = merged.apply(
+                lambda r: day_diff(r[bcol], r[ncol], holiday_set, calendar_mode) if not (pd.isna(r[bcol]) or pd.isna(r[ncol])) else None,
                 axis=1
             )
 
@@ -284,7 +316,7 @@ def compare_to_baseline(current: pd.DataFrame, baseline: pd.DataFrame, holiday_s
     # Flags
     merged["Changed?"] = merged.apply(
         lambda r: any([
-            r.get(f"Δ {c} (bd)") not in (None, 0) for c in ["PO Execution","Submittal End","Manufacturing End","Shipping End","Delivery Date","ROJ"]
+            r.get(delta_map.get(c, "")) not in (None, 0) for c in ["PO Execution","Submittal End","Manufacturing End","Shipping End","Delivery Date","ROJ"]
         ]),
         axis=1
     )
@@ -293,12 +325,12 @@ def compare_to_baseline(current: pd.DataFrame, baseline: pd.DataFrame, holiday_s
     keep = [
         "New: Equipment","Changed?",
         "Base: Mode","New: Mode",
-        "Base: PO Execution","New: PO Execution","Δ PO Execution (bd)",
-        "Base: Submittal End","New: Submittal End","Δ Submittal End (bd)",
-        "Base: Manufacturing End","New: Manufacturing End","Δ Manufacturing End (bd)",
-        "Base: Shipping End","New: Shipping End","Δ Shipping End (bd)",
-        "Base: Delivery Date","New: Delivery Date","Δ Delivery Date (bd)",
-        "Base: ROJ","New: ROJ","Δ ROJ (bd)",
+        "Base: PO Execution","New: PO Execution", delta_map.get("PO Execution"),
+        "Base: Submittal End","New: Submittal End", delta_map.get("Submittal End"),
+        "Base: Manufacturing End","New: Manufacturing End", delta_map.get("Manufacturing End"),
+        "Base: Shipping End","New: Shipping End", delta_map.get("Shipping End"),
+        "Base: Delivery Date","New: Delivery Date", delta_map.get("Delivery Date"),
+        "Base: ROJ","New: ROJ", delta_map.get("ROJ"),
         "Base: Status","New: Status","Base: Delta/Float (days)","New: Delta/Float (days)"
     ]
     keep = [c for c in keep if c in merged.columns]
@@ -311,7 +343,7 @@ with st.expander("Assumptions & Notes", expanded=True):
     st.markdown(
         """
 <div class="small-muted mb-2">
-<b>Assumptions:</b> Business-day math (Mon–Fri). Choose a single holiday preset.<br>
+<b>Assumptions:</b> Durations use the basis selected in the sidebar (business days = Mon–Fri). Choose a single holiday preset when using business days.<br>
 <b>Per-row Mode:</b> Forward = compute from PO; Backward = compute PO from ROJ.<br>
 <b>Committed Delivery:</b> If present, leave <i>Manufacturing (days)</i> blank and we’ll derive it.<br>
 <b>Backward PO cap:</b> If calculated PO lands before today, we cap it at today (manual past POs are allowed in Forward).<br>
@@ -325,6 +357,12 @@ with st.sidebar:
     st.header("Holiday Calendar")
     calendar_choice = st.selectbox("Preset", ["None","US Federal","Spain (C. Valenciana)","Netherlands","Italy","UK (England & Wales)","Mexico"])
     holiday_set = calendar.build_for_region(calendar_choice)
+    duration_basis = st.radio(
+        "Duration basis",
+        ["Business days (Mon–Fri)", "Calendar days"],
+        help="Choose how Submittal/Manufacturing/Shipping/Buffer durations should be interpreted when calculating dates.",
+    )
+    use_calendar_days = duration_basis == "Calendar days"
 
 # ================= Session init =================
 def make_default_df():
@@ -417,7 +455,7 @@ if "baseline_meta" not in st.session_state:
 # ================= Data Editor (FORM; Calculate-only) =================
 
 st.markdown("### Equipment & Durations")
-st.caption("Only fill **Delivery Date (committed)** if a vendor has provided a firm date. If so, leave **Manufacturing (days)** blank and we’ll derive it.")
+st.caption("Only fill **Delivery Date (committed)** if a vendor has provided a firm date. If so, leave **Manufacturing (days)** blank and we’ll derive it. Durations respect the basis selected in the sidebar.")
 
 editor_cols = [
     "Equipment","Mode","ROJ","PO Execution",
@@ -467,7 +505,7 @@ with st.form("grid_form", clear_on_submit=False):
 
 if calc_clicked:
     st.session_state.work_df = edited_df.copy()
-    st.session_state.results = compute_all(st.session_state.work_df, holiday_set)
+    st.session_state.results = compute_all(st.session_state.work_df, holiday_set, use_calendar_days)
 
 if reset:
     df = st.session_state.work_df.copy()
@@ -510,7 +548,7 @@ def renderBaselineButtons(c2, c3):
           # Ensure we lock the latest calc; if empty, compute on the fly
           current = st.session_state.results
           if current is None or current.empty:
-              current = compute_all(st.session_state.work_df, holiday_set)
+              current = compute_all(st.session_state.work_df, holiday_set, use_calendar_days)
 
           base = current.copy()
           for c in [
@@ -526,6 +564,7 @@ def renderBaselineButtons(c2, c3):
           st.session_state.baseline_meta = {
               "locked_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
               "calendar": calendar_choice,
+              "duration_basis": duration_basis,
           }
 
   with c3:
@@ -540,9 +579,15 @@ else:
     view = "Current"
     if not st.session_state.baseline.empty:
         meta = st.session_state.baseline_meta
-        blurb = f" (baseline {meta.get('locked_at','')} – {meta.get('calendar','')})"
+        basis = meta.get("duration_basis", duration_basis)
+        blurb = f" (baseline {meta.get('locked_at','')} – {meta.get('calendar','')} / {basis})"
         view = st.radio("View", ["Current","Compare to Baseline"], horizontal=True, index=0, help="Lock a baseline, then compare.")
         st.caption(f"Baseline locked{blurb}")
+        if basis != duration_basis:
+            st.warning(
+                f"Baseline was captured with **{basis}**. Switch the duration basis to match for apples-to-apples deltas.",
+                icon="⚠️",
+            )
 
     # Format helper
     def _dates_to_date(df):
@@ -561,14 +606,22 @@ else:
                            file_name="procurement_pass_results.csv", mime="text/csv")
         renderBaselineButtons(c2, c3)
     else:
-        comp = compare_to_baseline(st.session_state.results, st.session_state.baseline, holiday_set)
+        comp = compare_to_baseline(st.session_state.results, st.session_state.baseline, holiday_set, use_calendar_days)
         # Show deltas with simple emoji cues
         def delta_icon(v):
             if pd.isna(v) or v == 0: return ""
             return "▲" if v and v > 0 else "▼"
         display = comp.copy()
+        unit_label = "days" if use_calendar_days else "bd"
         for c in [col for col in display.columns if col.startswith("Δ ")]:
-            display[c] = display[c].apply(lambda v: f"{delta_icon(v)} {v} bd" if pd.notna(v) else "")
+            def _format_delta(v):
+                if pd.isna(v):
+                    return ""
+                icon = delta_icon(v)
+                value = f"{int(v)}" if isinstance(v, (int, np.integer)) else v
+                text = f"{value} {unit_label}"
+                return f"{icon} {text}" if icon else text
+            display[c] = display[c].apply(_format_delta)
         # Dates to date
         date_like_cols = {
             "Base: PO Execution","Base: Submittal End","Base: Manufacturing End",
